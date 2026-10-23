@@ -79,19 +79,29 @@
         statusEl.innerHTML = '<span class="spinner"></span>Loading Python WebAssembly engine...';
         pyodideInstance = await loadPyodide();
 
-        statusEl.innerHTML = '<span class="spinner"></span>Installing pdfplumber & pandas...';
-        await pyodideInstance.loadPackage(["pandas", "micropip"]);
-        
-        const micropip = pyodideInstance.pyimport("micropip");
-        await micropip.install("pdfplumber");
+        statusEl.innerHTML = '<span class="spinner"></span>Loading pandas & pypdf...';
+        // pypdf is built natively into Pyodide (no micropip/C++ issues)
+        await pyodideInstance.loadPackage(["pandas", "pypdf"]);
 
-        // Define Python conversion logic directly in Pyodide environment
+        // Define Python conversion logic inside Pyodide environment
         await pyodideInstance.runPythonAsync(`
-import pdfplumber
+import pypdf
 import pandas as pd
 import re
 import io
 from datetime import datetime
+
+# Wrapper class to match pdfplumber interface for your existing parsers
+class SimplePDFWrapper:
+    def __init__(self, pdf_bytes):
+        reader = pypdf.PdfReader(io.BytesIO(bytes(pdf_bytes)))
+        self.pages = [SimplePageWrapper(p) for p in reader.pages]
+
+class SimplePageWrapper:
+    def __init__(self, page):
+        self._page = page
+    def extract_text(self):
+        return self._page.extract_text() or ""
 
 def identify_bank(first_page_text: str) -> str:
     text_lower = first_page_text.lower()
@@ -388,18 +398,17 @@ BANK_PARSERS = {
 }
 
 def process_pdf_bytes(pdf_bytes):
-    pdf_file = io.BytesIO(bytes(pdf_bytes))
-    with pdfplumber.open(pdf_file) as pdf:
-        if not pdf.pages:
-            raise ValueError("PDF file has no pages.")
-        
-        bank_name = identify_bank(pdf.pages[0].extract_text() or "")
-        parser = BANK_PARSERS.get(bank_name)
-        
-        if not parser:
-            raise NotImplementedError(f"No parser available for detected bank: '{bank_name}'")
-        
-        parsed_rows = parser(pdf)
+    pdf = SimplePDFWrapper(pdf_bytes)
+    if not pdf.pages:
+        raise ValueError("PDF file has no pages.")
+    
+    bank_name = identify_bank(pdf.pages[0].extract_text() or "")
+    parser = BANK_PARSERS.get(bank_name)
+    
+    if not parser:
+        raise NotImplementedError(f"No parser available for detected bank: '{bank_name}'")
+    
+    parsed_rows = parser(pdf)
 
     df = pd.DataFrame(parsed_rows, columns=["Date", "Description", "Money In", "Money Out", "Balance"])
     if not df.empty:
@@ -446,7 +455,6 @@ def process_pdf_bytes(pdf_bytes):
         statusEl.style.color = "#2ea44f";
         statusEl.innerText = `Success! Detected Bank: ${bankName}`;
 
-        // Generate download button
         const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
         const url = URL.createObjectURL(blob);
         const downloadName = file.name.replace(/\.[^/.]+$/, "") + "_converted.csv";
