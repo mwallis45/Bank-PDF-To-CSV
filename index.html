@@ -79,9 +79,12 @@
         statusEl.innerHTML = '<span class="spinner"></span>Loading Python WebAssembly engine...';
         pyodideInstance = await loadPyodide();
 
-        statusEl.innerHTML = '<span class="spinner"></span>Loading pandas & pypdf...';
-        // pypdf is built natively into Pyodide (no micropip/C++ issues)
-        await pyodideInstance.loadPackage(["pandas", "pypdf"]);
+        statusEl.innerHTML = '<span class="spinner"></span>Loading pandas & micropip...';
+        await pyodideInstance.loadPackage(["pandas", "micropip"]);
+
+        statusEl.innerHTML = '<span class="spinner"></span>Installing pypdf via micropip...';
+        const micropip = pyodideInstance.pyimport("micropip");
+        await micropip.install("pypdf");
 
         // Define Python conversion logic inside Pyodide environment
         await pyodideInstance.runPythonAsync(`
